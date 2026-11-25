@@ -1,12 +1,6 @@
 name: Build Moonlight V+ for PC
 
 on:
-  push:
-    branches: [ master, main ]
-  pull_request:
-    branches: [ master, main ]
-  release:
-    types: [ published ]
   workflow_dispatch:
     inputs:
       publish_release:

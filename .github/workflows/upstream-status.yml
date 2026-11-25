@@ -5,9 +5,6 @@ name: Upstream sync status
 # 51 天无人同步、25 个提交堆积的失速状态。流程与判重口径见 docs/upstream-sync.md。
 
 on:
-  schedule:
-    # 每周一 01:23 UTC(北京时间周一上午),错开整点高峰
-    - cron: '23 1 * * 1'
   workflow_dispatch:
 
 permissions:
