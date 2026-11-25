@@ -1,0 +1,87 @@
+name: Build macOS x86_64
+
+on:
+  workflow_dispatch:
+
+env:
+  BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  build-macos-x86_64:
+    runs-on: macos-15-intel
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Get version
+      run: |
+        VERSION=$(python3 scripts/derive-version.py --field artifact)
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "CI_VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: Install create-dmg
+      run: |
+        brew install node
+        npm install --global create-dmg
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.11.1'
+        modules: 'qtmultimedia qtimageformats'
+        cache: true
+        aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@073e34d7c2ab4ae6961ed7cca690b3abd5ba5a7e'
+
+    - name: Test macOS overlay event wakeups
+      run: |
+        python3 setup-deps.py
+        pushd tests/overlay_button_native_wake
+        qmake overlay_button_native_wake.pro
+        make -j"$(sysctl -n hw.ncpu)"
+        DYLD_LIBRARY_PATH="$PWD/../../libs/mac/lib" ./overlay_button_native_wake
+        popd
+
+    - name: Build and generate DMG (x86_64)
+      env:
+        MOONLIGHT_ARCH: x86_64
+      run: |
+        scripts/generate-dmg.sh Release
+
+    - name: Verify DMG app bundle signature
+      run: |
+        DMG=$(ls build/installer-Release/*.dmg | head -1)
+        test -n "$DMG" || { echo "no DMG found" >&2; exit 1; }
+        MNT=$(mktemp -d /tmp/dmgverify.XXXXXX)
+        hdiutil attach "$DMG" -readonly -nobrowse -mountpoint "$MNT"
+        APP="$MNT/Moonlight.app"
+        codesign --verify --deep --strict "$APP"
+        BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$APP/Contents/Info.plist")
+        SIGNED_ID=$(codesign -dv "$APP" 2>&1 | sed -n 's/^Identifier=\(.*\)$/\1/p')
+        echo "CFBundleIdentifier=$BUNDLE_ID"
+        echo "Signature identifier=$SIGNED_ID"
+        test "$BUNDLE_ID" = "$SIGNED_ID"
+        file "$APP/Contents/MacOS/Moonlight"
+        hdiutil detach "$MNT"
+
+    - name: Smoke test USB forwarding helper
+      run: |
+        HELPER="build/build-Release/app/Moonlight.app/Contents/MacOS/moonlight-usbd"
+        test -x "$HELPER"
+        if otool -L "$HELPER" | grep -q "libusb"; then
+          otool -L "$HELPER"
+          echo "helper dynamically links libusb!" >&2
+          exit 1
+        fi
+        "$HELPER" --version
+        "$HELPER" list --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert isinstance(d, list)'
+
+    - name: Upload DMG artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Moonlight-VPlus-x86_64-r${{ env.BUILD_NUMBER }}.dmg
+        path: build/installer-Release/Moonlight-VPlus-*.dmg
+        if-no-files-found: error
